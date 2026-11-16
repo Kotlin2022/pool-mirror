@@ -34,7 +34,7 @@ h2{font-size:13px;color:var(--mut);margin:16px 0 8px;letter-spacing:.5px}
 .row .n{font-weight:600}
 .row .v{font-variant-numeric:tabular-nums;font-weight:700;color:var(--ok)}
 .row.low .v{color:var(--bad)}
-.row.low .n:after{content:' ⚠️'}
+.row.low .n:after{content:'低';font-size:10px;color:var(--bad);border:1px solid var(--bad);border-radius:4px;padding:1px 4px;margin-left:6px;vertical-align:1px;font-weight:400}
 .led{padding:8px 12px;border-bottom:1px solid var(--line);font-size:12.5px}
 .led:last-child{border-bottom:0}
 .led .l1{display:flex;justify-content:space-between}
@@ -52,11 +52,13 @@ h2{font-size:13px;color:var(--mut);margin:16px 0 8px;letter-spacing:.5px}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.62}}
 .refresh.done{padding:11px}
 .hint2.ok{color:var(--ok)}
+h1 .ti{width:18px;height:18px;vertical-align:-3px;color:var(--acc)}
+.err.warnbar{display:flex;gap:10px;align-items:center;color:var(--warn)}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>🪙 额度池</h1>
+  <h1><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M14.8 9.2c-.5-.7-1.5-1.2-2.8-1.2-1.7 0-3 .9-3 2s1.3 1.8 3 2 3 .9 3 2-1.3 2-3 2c-1.3 0-2.3-.5-2.8-1.2"/></svg> 额度池</h1>
   <div class="ts" id="ts">加载中…</div>
   <div id="content"><div class="err">加载中…</div></div>
   <div class="hint2" id="refreshHint">Mac 端每 20 秒自动同步 · 点右上角图标立即刷新</div>
@@ -89,8 +91,7 @@ function render(d){
              '<div class="l1"><span class="m">' + x.ts + ' · ' + x.model + '</span></div></div>';
     }).join('') + '</div>';
   if(d.low && d.low.length)
-    h += '<div class="err" style="margin-top:14px;color:var(--warn)">⚠️ 余额不足 20 分：' +
-         d.low.join('、') + '</div>';
+    h += '<div class="err warnbar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="width:16px;height:16px;flex:none"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span>余额不足 20 分：' + d.low.join('、') + '</span></div>';
   document.getElementById('content').innerHTML = h;
 }
 
