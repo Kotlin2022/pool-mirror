@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>额度池镜像</title>
+<style>
+:root{--bg:#111317;--panel:#1a1d24;--line:#2a2e38;--acc:#4d8bff;--ok:#34d399;
+  --warn:#fbbf24;--bad:#f87171;--mut:#8b93a7;--dim:#5b6272}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{background:var(--bg);color:#e8eaf0;font-family:-apple-system,PingFang SC,'Microsoft YaHei',sans-serif;
+  padding:max(12px,env(safe-area-inset-top)) 14px calc(20px + env(safe-area-inset-bottom));font-size:14px}
+.wrap{max-width:520px;margin:0 auto}
+h1{font-size:17px;margin-bottom:4px}
+.ts{font-size:12px;color:var(--mut);margin-bottom:14px}
+.total{background:linear-gradient(135deg,#1e3a8a,#0f5661);border-radius:14px;
+  padding:16px 18px;margin-bottom:14px}
+.total b{font-size:30px;font-variant-numeric:tabular-nums}
+.total span{font-size:12px;color:#9fc3ff;display:block;margin-top:2px}
+h2{font-size:13px;color:var(--mut);margin:16px 0 8px;letter-spacing:.5px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.row{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;
+  border-bottom:1px solid var(--line)}
+.row:last-child{border-bottom:0}
+.row .n{font-weight:600}
+.row .v{font-variant-numeric:tabular-nums;font-weight:700;color:var(--ok)}
+.row.low .v{color:var(--bad)}
+.row.low .n:after{content:' ⚠️'}
+.led{padding:8px 12px;border-bottom:1px solid var(--line);font-size:12.5px}
+.led:last-child{border-bottom:0}
+.led .l1{display:flex;justify-content:space-between}
+.led .l1 .m{color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55%}
+.led .c{color:var(--ok);font-variant-numeric:tabular-nums}
+.led .uk{color:var(--dim)}
+.err{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  padding:20px;color:var(--mut);text-align:center}
+.refresh{display:block;width:100%;margin-top:14px;padding:11px;border:0;border-radius:12px;
+  background:var(--acc);color:#fff;font-size:14px;font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🪙 额度池镜像</h1>
+  <div class="ts" id="ts">加载中…</div>
+  <div id="content"><div class="err">加载中…</div></div>
+  <button class="refresh" onclick="load()">↻ 刷新</button>
+</div>
+<script>
+const KEY = new URLSearchParams(location.search).get('k') || '';
+const FILE = ['s-','ad99ad','.json'].join('');
+async function load(){
+  if(KEY !== 'ad99ad'){
+    document.getElementById('content').innerHTML =
+      '<div class="err">请从控制台/微信里的完整链接打开（缺少访问密钥 k 参数）</div>';
+    return;
+  }
+  try{
+    const r = await fetch('./' + FILE + '?cb=' + Date.now(), {cache:'no-store'});
+    const d = await r.json();
+    document.getElementById('ts').textContent = '数据时间 ' + d.ts + ' · 更新于 ' + d.generated;
+    let h = '<div class="total"><b>' + d.total.toLocaleString() + '</b> 分<span>全部账号 · 可用积分合计</span></div>';
+    h += '<h2>各账号剩余积分</h2><div class="card">' +
+      d.balances.map(x => {
+        const low = x[1] < 20;
+        return '<div class="row' + (low ? ' low' : '') + '"><span class="n">' + x[0] + '</span>' +
+               '<span class="v">' + x[1].toLocaleString() + ' 分</span></div>';
+      }).join('') + '</div>';
+    h += '<h2>最近 30 条消耗</h2><div class="card">' +
+      d.ledger.map(x => {
+        const uk = x.credit === '未知';
+        return '<div class="led"><div class="l1"><span class="m">' + x.acct + '</span>' +
+               '<span class="' + (uk ? 'uk' : 'c') + '">' + x.credit + ' 分</span></div>' +
+               '<div class="l1"><span class="m">' + x.ts + ' · ' + x.model + '</span></div></div>';
+      }).join('') + '</div>';
+    if(d.low.length) h += '<div class="err" style="margin-top:14px;color:var(--warn)">⚠️ 余额不足 20 分：' + d.low.join('、') + '</div>';
+    document.getElementById('content').innerHTML = h;
+  }catch(e){
+    document.getElementById('content').innerHTML =
+      '<div class="err">加载失败：' + e.message + '<br>请稍后重试或从完整链接重新打开</div>';
+  }
+}
+load();
+setInterval(load, 300000);   // 每 5 分钟自动刷新
+</script>
+</body>
+</html>
