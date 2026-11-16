@@ -14,9 +14,18 @@ body{background:var(--bg);color:#e8eaf0;font-family:-apple-system,PingFang SC,'M
 h1{font-size:17px;margin-bottom:4px}
 .ts{font-size:12px;color:var(--mut);margin-bottom:14px}
 .total{background:linear-gradient(135deg,#1e3a8a,#0f5661);border-radius:14px;
-  padding:16px 18px;margin-bottom:14px}
+  padding:16px 16px 16px 18px;margin-bottom:14px;display:flex;
+  justify-content:space-between;align-items:center}
 .total b{font-size:30px;font-variant-numeric:tabular-nums}
 .total span{font-size:12px;color:#9fc3ff;display:block;margin-top:2px}
+.icon-btn{flex:none;width:44px;height:44px;border-radius:50%;border:1.5px solid rgba(255,255,255,.35);
+  background:rgba(255,255,255,.12);color:#fff;display:flex;align-items:center;
+  justify-content:center;cursor:pointer;padding:0}
+.icon-btn:active{background:rgba(255,255,255,.25)}
+.icon-btn svg{width:20px;height:20px}
+.icon-btn.spin svg{animation:spin 1s linear infinite}
+.icon-btn.done{border-color:var(--ok);background:rgba(52,211,153,.2);color:var(--ok)}
+@keyframes spin{to{transform:rotate(360deg)}}
 h2{font-size:13px;color:var(--mut);margin:16px 0 8px;letter-spacing:.5px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
 .row{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;
@@ -50,10 +59,7 @@ h2{font-size:13px;color:var(--mut);margin:16px 0 8px;letter-spacing:.5px}
   <h1>🪙 额度池</h1>
   <div class="ts" id="ts">加载中…</div>
   <div id="content"><div class="err">加载中…</div></div>
-  <button class="refresh" id="refreshBtn" onclick="load(true)">
-    <span id="btnLabel">↻ 刷新</span>
-  </button>
-  <div class="hint2" id="refreshHint">Mac 端每 20 秒自动同步一次</div>
+  <div class="hint2" id="refreshHint">Mac 端每 20 秒自动同步 · 点右上角图标立即刷新</div>
 </div>
 <script>
 const KEY = new URLSearchParams(location.search).get('k') || '';
@@ -63,8 +69,12 @@ let busy = false;
 function render(d){
   document.getElementById('ts').textContent =
     '数据时间 ' + d.ts + ' · 同步于 ' + (d.generated || '').slice(11);
-  let h = '<div class="total"><b>' + d.total.toLocaleString() + '</b> 分' +
-          '<span>全部账号 · 可用积分合计</span></div>';
+  let h = '<div class="total"><div>' +
+          '<b>' + d.total.toLocaleString() + '</b> 分' +
+          '<span>全部账号 · 可用积分合计</span></div>' +
+          '<button class="icon-btn" id="refreshBtn" onclick="load(true)" aria-label="刷新">' +
+          '<svg id="btnIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">' +
+          '<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg></button></div>';
   h += '<h2>各账号剩余积分</h2><div class="card">' +
     d.balances.map(x => {
       const low = x[1] < 20;
@@ -85,32 +95,32 @@ function render(d){
 }
 
 const btnEl = () => document.getElementById('refreshBtn');
-const labelEl = () => document.getElementById('btnLabel');
 const hintEl = () => document.getElementById('refreshHint');
+const ICON_OK = '<path d="M20 6L9 17l-5-5"/>';
 
 function setBtn(state){
-  const b = btnEl(), l = labelEl(), h = hintEl();
+  const b = btnEl(), h = hintEl();
+  const svg = document.getElementById('btnIcon');
   b.classList.remove('spin', 'done');
+  svg.innerHTML = '<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/>';
   if(state === 'loading'){
     b.disabled = true; b.classList.add('spin');
-    l.textContent = '刷新中…';
-    h.textContent = '正在获取最新数据';
+    h.textContent = '正在获取最新数据…';
     h.classList.remove('ok');
   }else if(state === 'done'){
     b.disabled = false; b.classList.add('done');
-    l.textContent = '✓ 刷新完成';
-    h.textContent = '已是最新数据';
+    svg.innerHTML = ICON_OK;   // 换成对勾
+    h.textContent = '✓ 已是最新数据';
     h.classList.add('ok');
     setTimeout(() => {
       b.classList.remove('done');
-      l.textContent = '↻ 刷新';
+      svg.innerHTML = '<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/>';
       h.classList.remove('ok');
-      h.textContent = 'Mac 端每 20 秒自动同步一次';
+      h.textContent = 'Mac 端每 20 秒自动同步 · 点右上角图标立即刷新';
     }, 1800);
   }else{
     b.disabled = false;
-    l.textContent = '↻ 刷新';
-    h.textContent = 'Mac 端每 20 秒自动同步一次';
+    h.textContent = 'Mac 端每 20 秒自动同步 · 点右上角图标立即刷新';
     h.classList.remove('ok');
   }
 }
@@ -123,18 +133,18 @@ async function load(force){
     return;
   }
   busy = true;
-  if(force) setBtn('loading');
+  setBtn('loading');
   try{
     const r = await fetch('./' + FILE + '?t=' + Date.now(),
                           {cache:'no-store', headers:{'Cache-Control':'no-cache'}});
     if(!r.ok) throw new Error('HTTP ' + r.status);
     const d = await r.json();
     render(d);
-    if(force) setBtn('done');
+    setBtn(force ? 'done' : 'idle');
   }catch(e){
     document.getElementById('content').innerHTML =
-      '<div class="err">加载失败：' + e.message + '<br>请稍后点击刷新重试</div>';
-    if(force) setBtn('idle');
+      '<div class="err">加载失败：' + e.message + '<br>请稍后点击右上角图标重试</div>';
+    setBtn('idle');
   }finally{
     busy = false;
   }
