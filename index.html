@@ -42,74 +42,88 @@ h2{font-size:13px;color:var(--mut);margin:16px 0 8px;letter-spacing:.5px}
 .led .c{color:var(--ok);font-variant-numeric:tabular-nums}
 .led .uk{color:var(--dim)}
 .err{background:var(--panel);border:1px solid var(--line);border-radius:12px;
-  padding:20px;color:var(--mut);text-align:center}
-.refresh{display:block;width:100%;margin-top:14px;padding:11px;border:0;border-radius:12px;
-  background:var(--acc);color:#fff;font-size:14px;font-weight:600}
-.refresh:disabled{opacity:.6}
+  padding:20px;color:var(--mut);text-align:center;line-height:1.6}
 .hint2{font-size:11.5px;color:var(--dim);text-align:center;margin-top:10px;line-height:1.5}
-.refresh.done{background:var(--ok)}
-.refresh.spin{animation:pulse 1s ease-in-out infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.62}}
-.refresh.done{padding:11px}
 .hint2.ok{color:var(--ok)}
 h1 .ti{width:18px;height:18px;vertical-align:-3px;color:var(--acc)}
 .err.warnbar{display:flex;gap:10px;align-items:center;color:var(--warn)}
+/* 诊断面板：手机端定位「卡在哪一步」用，纯本地渲染，不依赖任何外部资源 */
+.diag{margin-top:18px;background:#0d0f13;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.diag .dh{display:flex;align-items:center;gap:7px;padding:9px 12px;border-bottom:1px solid var(--line)}
+.diag .dh b{font-size:12px;font-weight:600;color:#e8eaf0}
+.diag .dh .ver{font-size:10.5px;color:var(--dim);margin-right:auto}
+.diag .dh button{border:1px solid var(--line);background:#20242c;color:#cdd3e0;
+  font-size:11.5px;border-radius:7px;padding:4px 9px;cursor:pointer}
+.diag .dh button:active{background:#2a303a}
+.diag pre{margin:0;padding:10px 12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:11px;line-height:1.55;color:#9aa4b8;max-height:44vh;overflow:auto;white-space:pre-wrap;word-break:break-all}
+.diag pre .bad{color:var(--bad)}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M14.8 9.2c-.5-.7-1.5-1.2-2.8-1.2-1.7 0-3 .9-3 2s1.3 1.8 3 2 3 .9 3 2-1.3 2-3 2c-1.3 0-2.3-.5-2.8-1.2"/></svg> 额度池</h1>
-  <div class="ts" id="ts">加载中…</div>
-  <div id="content"><div class="err">加载中…</div></div>
+  <div class="ts" id="ts">等待数据…</div>
+  <div id="content"><div class="err">正在加载…<br><span style="font-size:12px;color:var(--dim)">每一步的结果都会写进下面的诊断日志</span></div></div>
   <div class="hint2" id="refreshHint">Mac 端分时段自动同步 · 点右上角图标立即刷新</div>
+
+  <div class="diag">
+    <div class="dh">
+      <b>诊断日志</b><span class="ver" id="ver"></span>
+      <button id="retryBtn" type="button">重新加载</button>
+      <button id="copyBtn" type="button">复制</button>
+    </div>
+    <pre id="log"></pre>
+  </div>
 </div>
 <script>
-const KEY = new URLSearchParams(location.search).get('k') || '';
-const FILE = ['s-', 'ad99ad', '.json'].join('');
-const HINT_IDLE = 'Mac 端分时段自动同步 · 点右上角图标立即刷新';
-// 取数源：同源优先；GitHub Pages 在国内移动网络下经常挂起，jsDelivr 镜像做兜底。
-// cdn.jsdelivr.net 主域在本网络已不可达，所以直接用分区镜像。
-const SOURCES = [
-  '.',
-  'https://testingcf.jsdelivr.net/gh/Kotlin2022/pool-mirror@main',
-  'https://fastly.jsdelivr.net/gh/Kotlin2022/pool-mirror@main',
-  'https://gcore.jsdelivr.net/gh/Kotlin2022/pool-mirror@main',
+'use strict';
+var PAGE_VERSION = 'v3 · 11-16 11:05';
+var KEY = new URLSearchParams(location.search).get('k') || '';
+var FILE = ['s-', 'ad99ad', '.json'].join('');
+var HINT_IDLE = 'Mac 端分时段自动同步 · 点右上角图标立即刷新';
+// 取数源：同源优先；GitHub Pages 在国内移动网络下常挂起，jsDelivr 分区镜像兜底。
+// 注意 cdn.jsdelivr.net 主域在本网络已不可达，所以只列分区镜像。
+var SOURCES = [
+  {label: '同源 Pages   ', base: '.'},
+  {label: 'CDN testingcf', base: 'https://testingcf.jsdelivr.net/gh/Kotlin2022/pool-mirror@main'},
+  {label: 'CDN fastly   ', base: 'https://fastly.jsdelivr.net/gh/Kotlin2022/pool-mirror@main'},
+  {label: 'CDN gcore    ', base: 'https://gcore.jsdelivr.net/gh/Kotlin2022/pool-mirror@main'}
 ];
-let bestSrc = 0;          // 上次成功的源，下次优先试它
-let busy = false;
-let retried = false;      // 失败后 15 秒自动补试一次，避免死等 60s 轮询
+var TIMEOUT = 8000;
+var bestSrc = 0, busy = false, retried = false;
+var T0 = (window.performance && performance.now) ? performance.now() : Date.now();
+var LOGS = [];
 
-async function fetchJSON(url, ms){
-  const c = new AbortController();
-  const t = setTimeout(() => c.abort(), ms || 8000);
-  try{
-    const r = await fetch(url, {cache:'no-store', signal: c.signal,
-                                headers:{'Cache-Control':'no-cache'}});
-    if(!r.ok) throw new Error('HTTP ' + r.status);
-    return await r.json();
-  }finally{
-    clearTimeout(t);
-  }
+function clock(){
+  var n = ((window.performance && performance.now) ? performance.now() : Date.now()) - T0;
+  return (n / 1000).toFixed(1) + 's';
 }
+function log(msg){
+  LOGS.push('[' + clock() + '] ' + msg);
+  var el = document.getElementById('log');
+  if(el){ el.textContent = LOGS.join('\n'); el.scrollTop = el.scrollHeight; }
+}
+function since(t){ return Math.round(((window.performance && performance.now) ? performance.now() : Date.now()) - t); }
 
 function render(d){
   document.getElementById('ts').textContent =
     '数据时间 ' + d.ts + ' · 同步于 ' + (d.generated || '').slice(11);
-  let h = '<div class="total"><div>' +
-          '<b>' + d.total.toLocaleString() + '</b> 分' +
+  var h = '<div class="total"><div>' +
+          '<b>' + (d.total || 0).toLocaleString() + '</b> 分' +
           '<span>全部账号 · 可用积分合计</span></div>' +
           '<button class="icon-btn" id="refreshBtn" onclick="load(true)" aria-label="刷新">' +
           '<svg id="btnIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">' +
           '<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg></button></div>';
   h += '<h2>各账号剩余积分</h2><div class="card">' +
-    d.balances.map(x => {
-      const low = x[1] < 20;
+    (d.balances || []).map(function(x){
+      var low = x[1] < 20;
       return '<div class="row' + (low ? ' low' : '') + '"><span class="n">' + x[0] + '</span>' +
              '<span class="v">' + x[1].toLocaleString() + ' 分</span></div>';
     }).join('') + '</div>';
   h += '<h2>最近 30 条消耗</h2><div class="card">' +
-    d.ledger.map(x => {
-      const uk = x.credit === '未知';
+    (d.ledger || []).map(function(x){
+      var uk = x.credit === '未知';
       return '<div class="led"><div class="l1"><span class="m">' + x.acct + '</span>' +
              '<span class="' + (uk ? 'uk' : 'c') + '">' + x.credit + ' 分</span></div>' +
              '<div class="l1"><span class="m">' + x.ts + ' · ' + x.model + '</span></div></div>';
@@ -119,79 +133,140 @@ function render(d){
   document.getElementById('content').innerHTML = h;
 }
 
-const btnEl = () => document.getElementById('refreshBtn');
-const hintEl = () => document.getElementById('refreshHint');
-const ICON_OK = '<path d="M20 6L9 17l-5-5"/>';
+function btnEl(){ return document.getElementById('refreshBtn'); }
+function hintEl(){ return document.getElementById('refreshHint'); }
+var ICON_REFRESH = '<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/>';
+var ICON_OK = '<path d="M20 6L9 17l-5-5"/>';
 
 function setBtn(state){
-  const b = btnEl(), h = hintEl();
-  const svg = document.getElementById('btnIcon');
+  var b = btnEl();
+  if(!b) return;                         // 首屏还没渲染出按钮，直接跳过（不能抛异常）
+  var svg = document.getElementById('btnIcon');
+  var h = hintEl();
   b.classList.remove('spin', 'done');
-  svg.innerHTML = '<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/>';
+  if(svg) svg.innerHTML = ICON_REFRESH;
   if(state === 'loading'){
     b.disabled = true; b.classList.add('spin');
-    h.textContent = '正在获取最新数据…';
-    h.classList.remove('ok');
+    h.textContent = '正在获取最新数据…'; h.classList.remove('ok');
   }else if(state === 'done'){
     b.disabled = false; b.classList.add('done');
-    svg.innerHTML = ICON_OK;   // 换成对勾
-    h.textContent = '已是最新数据';
-    h.classList.add('ok');
-    setTimeout(() => {
+    if(svg) svg.innerHTML = ICON_OK;
+    h.textContent = '已是最新数据'; h.classList.add('ok');
+    setTimeout(function(){
       b.classList.remove('done');
-      svg.innerHTML = '<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/>';
-      h.classList.remove('ok');
-      h.textContent = HINT_IDLE;
+      if(svg) svg.innerHTML = ICON_REFRESH;
+      h.classList.remove('ok'); h.textContent = HINT_IDLE;
     }, 1800);
   }else{
-    b.disabled = false;
-    h.textContent = HINT_IDLE;
-    h.classList.remove('ok');
+    b.disabled = false; h.textContent = HINT_IDLE; h.classList.remove('ok');
+  }
+}
+
+async function fetchJSON(url, ms){
+  var c = new AbortController();
+  var t = setTimeout(function(){ c.abort(); }, ms || TIMEOUT);
+  try{
+    var r = await fetch(url, {cache: 'no-store', signal: c.signal,
+                              headers: {'Cache-Control': 'no-cache'}});
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    var txt = await r.text();
+    var d;
+    try{ d = JSON.parse(txt); }
+    catch(e){ throw new Error('返回的不是 JSON（前 40 字：' + txt.slice(0, 40).replace(/\s+/g, ' ') + '）'); }
+    return {d: d, bytes: txt.length};
+  }finally{
+    clearTimeout(t);
   }
 }
 
 async function load(force){
-  if(busy) return;
-  if(force) retried = false;   // 手动刷新时恢复自动重试资格
+  if(force) retried = false;
+  if(busy){ log('忽略一次重复请求（上一次还没结束）'); return; }
   if(KEY !== 'ad99ad'){
     document.getElementById('content').innerHTML =
       '<div class="err">请从完整链接打开（缺少访问密钥 k 参数）</div>';
+    log('k 参数不匹配，已中止取数');
     return;
   }
   busy = true;
   setBtn('loading');
-  let lastErr = null;
-  try{
-    // 按 上次成功的源优先 的顺序轮询，8 秒超时，谁先给数据用谁
-    const order = [bestSrc].concat(SOURCES.map((_, i) => i).filter(i => i !== bestSrc));
-    for(const i of order){
-      try{
-        const d = await fetchJSON(SOURCES[i] + '/' + FILE + '?t=' + Date.now(), 8000);
-        bestSrc = i;
-        render(d);
-        setBtn(force ? 'done' : 'idle');
-        retried = false;
-        return;
-      }catch(e){ lastErr = e; }
+  var order = [bestSrc].concat(SOURCES.map(function(_, i){ return i; }).filter(function(i){ return i !== bestSrc; }));
+  var ok = false, lastErr = null;
+  log('开始取数，共 ' + SOURCES.length + ' 个源，单个超时 ' + (TIMEOUT / 1000) + 's');
+  for(var k = 0; k < order.length; k++){
+    var i = order[k], s = SOURCES[i];
+    var url = s.base + '/' + FILE + '?t=' + Date.now();
+    var t = (window.performance && performance.now) ? performance.now() : Date.now();
+    log('尝试 ' + s.label + ' → ' + url.replace(/\?.*/, ''));
+    try{
+      var res = await fetchJSON(url, TIMEOUT);
+      var d = res.d;
+      log('成功 ' + s.label + ' · ' + since(t) + 'ms · ' + res.bytes + 'B · ' +
+          ((d.balances || []).length) + ' 个账号 · 合计 ' + d.total);
+      bestSrc = i;
+      render(d);
+      setBtn(force ? 'done' : 'idle');
+      ok = true; retried = false;
+      break;
+    }catch(e){
+      lastErr = e;
+      var why = (e && e.name === 'AbortError') ? ('超过 ' + (TIMEOUT / 1000) + 's 无响应（多半被网络挡了）')
+                                                : (e && e.message ? e.message : String(e));
+      log('失败 ' + s.label + ' · ' + since(t) + 'ms · ' + why);
     }
-    throw lastErr || new Error('所有数据源均不可达');
-  }catch(e){
-    const msg = (e && e.name === 'AbortError') ? '请求超时' : (e.message || '网络错误');
+  }
+  if(!ok){
+    var msg = lastErr ? ((lastErr.name === 'AbortError') ? '请求超时' : (lastErr.message || '网络错误')) : '所有数据源均不可达';
     document.getElementById('content').innerHTML =
       '<div class="err">加载失败：' + msg +
-      '<br>GitHub 与 CDN 都没连上，多为手机网络受限<br>稍后会自动重试，也可点右上角图标手动重试</div>';
+      '<br>GitHub 与 CDN 都没连上，多为手机网络受限' +
+      '<br><span style="font-size:12px;color:var(--dim)">下方诊断日志可直接复制反馈</span></div>';
     setBtn('idle');
-    if(!retried){          // 静默补试一次，成功后正常渲染
+    log('全部数据源失败：' + msg);
+    if(!retried){
       retried = true;
-      setTimeout(() => load(), 15000);
+      log('15 秒后自动重试一次');
+      setTimeout(function(){ load(); }, 15000);
     }
-  }finally{
-    busy = false;
   }
+  busy = false;
 }
 
+document.getElementById('ver').textContent = PAGE_VERSION;
+document.getElementById('retryBtn').onclick = function(){ log('手动触发重新加载'); load(true); };
+document.getElementById('copyBtn').onclick = function(){
+  var text = LOGS.join('\n');
+  var b = document.getElementById('copyBtn');
+  var old = b.textContent;
+  function done(t){ b.textContent = t; setTimeout(function(){ b.textContent = old; }, 1500); }
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(function(){ done('已复制'); },
+                                            function(){ fallbackCopy(text, done); });
+  }else{
+    fallbackCopy(text, done);
+  }
+};
+function fallbackCopy(text, done){
+  var ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  try{ document.execCommand('copy'); done('已复制'); }catch(e){ done('复制失败，请长按选择'); }
+  document.body.removeChild(ta);
+}
+
+// 首屏环境信息：这几行是排查「谁挡住了请求」的关键
+log('页面版本 ' + PAGE_VERSION);
+log('地址 ' + location.href.replace(/([?&]k=)[^&]*/, '$1***'));
+log('密钥 k ' + (KEY ? ('已携带 ' + KEY.length + ' 位') : '缺失'));
+log('浏览器 ' + String(navigator.userAgent).slice(0, 110));
+var conn = navigator.connection || {};
+log('网络 ' + (conn.effectiveType || '未知') + (conn.downlink ? (' / ' + conn.downlink + 'Mbps') : '') +
+    (navigator.onLine === false ? ' · 离线' : ''));
+log('fetch ' + (typeof fetch === 'function' ? '可用' : '不可用（浏览器过旧）'));
+log('本地缓存时间 ' + new Date().toLocaleString());
+
 load();
-setInterval(() => load(), 60000);    // 静默刷新（60s），不干扰按钮状态
+setInterval(function(){ load(); }, 60000);
 </script>
 </body>
 </html>
