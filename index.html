@@ -61,12 +61,36 @@ h1 .ti{width:18px;height:18px;vertical-align:-3px;color:var(--acc)}
   <h1><svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M14.8 9.2c-.5-.7-1.5-1.2-2.8-1.2-1.7 0-3 .9-3 2s1.3 1.8 3 2 3 .9 3 2-1.3 2-3 2c-1.3 0-2.3-.5-2.8-1.2"/></svg> 额度池</h1>
   <div class="ts" id="ts">加载中…</div>
   <div id="content"><div class="err">加载中…</div></div>
-  <div class="hint2" id="refreshHint">Mac 端每 20 秒自动同步 · 点右上角图标立即刷新</div>
+  <div class="hint2" id="refreshHint">Mac 端分时段自动同步 · 点右上角图标立即刷新</div>
 </div>
 <script>
 const KEY = new URLSearchParams(location.search).get('k') || '';
 const FILE = ['s-', 'ad99ad', '.json'].join('');
+const HINT_IDLE = 'Mac 端分时段自动同步 · 点右上角图标立即刷新';
+// 取数源：同源优先；GitHub Pages 在国内移动网络下经常挂起，jsDelivr 镜像做兜底。
+// cdn.jsdelivr.net 主域在本网络已不可达，所以直接用分区镜像。
+const SOURCES = [
+  '.',
+  'https://testingcf.jsdelivr.net/gh/Kotlin2022/pool-mirror@main',
+  'https://fastly.jsdelivr.net/gh/Kotlin2022/pool-mirror@main',
+  'https://gcore.jsdelivr.net/gh/Kotlin2022/pool-mirror@main',
+];
+let bestSrc = 0;          // 上次成功的源，下次优先试它
 let busy = false;
+let retried = false;      // 失败后 15 秒自动补试一次，避免死等 60s 轮询
+
+async function fetchJSON(url, ms){
+  const c = new AbortController();
+  const t = setTimeout(() => c.abort(), ms || 8000);
+  try{
+    const r = await fetch(url, {cache:'no-store', signal: c.signal,
+                                headers:{'Cache-Control':'no-cache'}});
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    return await r.json();
+  }finally{
+    clearTimeout(t);
+  }
+}
 
 function render(d){
   document.getElementById('ts').textContent =
@@ -111,23 +135,24 @@ function setBtn(state){
   }else if(state === 'done'){
     b.disabled = false; b.classList.add('done');
     svg.innerHTML = ICON_OK;   // 换成对勾
-    h.textContent = '✓ 已是最新数据';
+    h.textContent = '已是最新数据';
     h.classList.add('ok');
     setTimeout(() => {
       b.classList.remove('done');
       svg.innerHTML = '<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/>';
       h.classList.remove('ok');
-      h.textContent = 'Mac 端每 20 秒自动同步 · 点右上角图标立即刷新';
+      h.textContent = HINT_IDLE;
     }, 1800);
   }else{
     b.disabled = false;
-    h.textContent = 'Mac 端每 20 秒自动同步 · 点右上角图标立即刷新';
+    h.textContent = HINT_IDLE;
     h.classList.remove('ok');
   }
 }
 
 async function load(force){
   if(busy) return;
+  if(force) retried = false;   // 手动刷新时恢复自动重试资格
   if(KEY !== 'ad99ad'){
     document.getElementById('content').innerHTML =
       '<div class="err">请从完整链接打开（缺少访问密钥 k 参数）</div>';
@@ -135,17 +160,31 @@ async function load(force){
   }
   busy = true;
   setBtn('loading');
+  let lastErr = null;
   try{
-    const r = await fetch('./' + FILE + '?t=' + Date.now(),
-                          {cache:'no-store', headers:{'Cache-Control':'no-cache'}});
-    if(!r.ok) throw new Error('HTTP ' + r.status);
-    const d = await r.json();
-    render(d);
-    setBtn(force ? 'done' : 'idle');
+    // 按 上次成功的源优先 的顺序轮询，8 秒超时，谁先给数据用谁
+    const order = [bestSrc].concat(SOURCES.map((_, i) => i).filter(i => i !== bestSrc));
+    for(const i of order){
+      try{
+        const d = await fetchJSON(SOURCES[i] + '/' + FILE + '?t=' + Date.now(), 8000);
+        bestSrc = i;
+        render(d);
+        setBtn(force ? 'done' : 'idle');
+        retried = false;
+        return;
+      }catch(e){ lastErr = e; }
+    }
+    throw lastErr || new Error('所有数据源均不可达');
   }catch(e){
+    const msg = (e && e.name === 'AbortError') ? '请求超时' : (e.message || '网络错误');
     document.getElementById('content').innerHTML =
-      '<div class="err">加载失败：' + e.message + '<br>请稍后点击右上角图标重试</div>';
+      '<div class="err">加载失败：' + msg +
+      '<br>GitHub 与 CDN 都没连上，多为手机网络受限<br>稍后会自动重试，也可点右上角图标手动重试</div>';
     setBtn('idle');
+    if(!retried){          // 静默补试一次，成功后正常渲染
+      retried = true;
+      setTimeout(() => load(), 15000);
+    }
   }finally{
     busy = false;
   }
