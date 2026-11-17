@@ -37,6 +37,23 @@ except Exception:
     pass
 
 
+def key_of(r):
+    """聚合键统一为 uid8：新行取 uid 前 8 位；旧行无 uid，从「昵称(uid8)」里取。
+
+    不能直接用「uid or account 串」当 key——2026-11-17 起新行带 uid、旧行没有，
+    同一账号会被拆成两个桶，镜像页出现重名账号。
+    """
+    uid = r.get('uid') or ''
+    if uid:
+        return uid[:8]
+    acct = r.get('account', '?')
+    if '(' in acct:
+        u8 = acct.rsplit('(', 1)[-1].rstrip(')')
+        if u8:
+            return u8
+    return acct
+
+
 def disp(r):
     """单条账本行的展示名：uid/uid8 命中别名用别名，否则取官方昵称。"""
     uid = r.get('uid') or ''
@@ -53,8 +70,7 @@ latest, row_of = {}, {}
 for r in rows:
     ba = r.get('balance_after')
     if isinstance(ba, (int, float)):
-        # 以 uid（缺省退回 account 串）为稳定键聚合，改名不影响归属
-        key = r.get('uid') or r.get('account', '?')
+        key = key_of(r)
         latest[key] = ba
         row_of[key] = r
 
