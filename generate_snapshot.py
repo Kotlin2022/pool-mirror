@@ -76,14 +76,35 @@ for r in rows:
 
 total = sum(latest.values())
 
+def credit_text(r):
+    """积分消耗展示文案：限时免费/网关截断的小额一律记为 0 分。
+
+    历史账本行写死 '<0.01'，新版 pool_bridge 已改写为 '0'，但镜像快照会被
+    反复重新生成，所以这里再兜一层，避免旧行把 '<0.01' 又带回镜像页。
+    """
+    lab = r.get('credit_label')
+    c = r.get('credit')
+    if lab:
+        s = str(lab)
+    elif c is None:
+        return '未知'
+    else:
+        try:
+            return '0' if float(c) <= 0 else str(c)
+        except (TypeError, ValueError):
+            s = str(c)
+    if s == '<0.01' or s in ('≈0', '≈0.0', '≈0.00'):
+        return '0'
+    return s
+
+
 led = []
 for r in rows[-30:]:
-    credit = r.get('credit_label') or ('未知' if r.get('credit') is None else str(r.get('credit')))
     led.append({
         'ts': r.get('ts', '')[11:],
         'acct': disp(r),
         'model': r.get('model', ''),
-        'credit': credit,
+        'credit': credit_text(r),
     })
 
 low = [disp(row_of[k]) for k, v in latest.items() if v < 20]
