@@ -93,25 +93,27 @@ def live_balances():
 
 live = live_balances()
 
-# 聚合：账号集合取「账本」与「实时余额」并集；每个号实时优先、账本兜底。
+# 聚合：账号集合严格跟随控制台当前账号列表（用户 11-20 定案）。
+# 实时源可用 → 只统计实时源里的账号，账本中已移除/失效的老账号不再计入；
+# 实时源不可用 → 才回落账本余额（不比过去更差，保证控制台没开也能出快照）。
 latest, row_of = {}, {}
-for r in rows:
-    ba = r.get('balance_after')
-    if isinstance(ba, (int, float)):
-        key = key_of(r)
-        latest[key] = ba
-        row_of[key] = r
-
-# 实时余额覆盖同名账号；账本里没有的新号补进来，展示名用别名 > 实时 nickname > uid8
-for uid8, (remain, nick) in live.items():
-    latest[uid8] = remain
-    if uid8 not in row_of:
+if live:
+    for uid8, (remain, nick) in live.items():
+        latest[uid8] = remain
         name = alias_by_uid8.get(uid8) or nick
         row_of[uid8] = {'uid': uid8, 'account': name + '(' + uid8 + ')'}
+    src = '控制台实时源'
+else:
+    for r in rows:
+        ba = r.get('balance_after')
+        if isinstance(ba, (int, float)):
+            key = key_of(r)
+            latest[key] = ba
+            row_of[key] = r
+    src = '账本兜底'
 
 total = sum(latest.values())
-print('[balance] 实时源 %d 个账号，账本兜底后共 %d 个，合计 %d' %
-      (len(live), len(latest), total))
+print('[balance] 数据源 %s，%d 个账号，合计 %d' % (src, len(latest), total))
 
 def credit_text(r):
     """积分消耗展示文案：限时免费/网关截断的小额一律记为 0 分。
