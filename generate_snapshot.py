@@ -6,7 +6,7 @@
 旧账本行没有 uid 字段，用 account 字符串里的 uid8 反查别名；
 新行（2026-11-17 起）直接带 uid，匹配更稳。
 """
-import json, os, datetime
+import json, os, datetime, urllib.request
 
 HERE = os.path.dirname(__file__)
 LEDGER = os.path.join(HERE, '..', 'switcher', 'usage.jsonl')
@@ -66,6 +66,34 @@ def disp(r):
     return acct.split('(')[0]
 
 
+# 本地控制台实时余额（uid8 → remain）。快照脚本本身不打官方接口，只是读控制台
+# 内存里那份 60s TTL 的余额缓存——控制台前端每 8s 轮询 overview 会维持它。
+# 账本里的 balance_after 是「最后一次请求时的余额」，低频号会陈旧（几天前），
+# 直接拿它聚合会让镜像总额比控制台少几千分。所以实时优先、账本兜底。
+def live_balances():
+    url = 'http://127.0.0.1:8765/api/pool/overview'
+    try:
+        # 显式禁用代理：沙箱/某些终端会设 HTTP_PROXY，Python urllib 不总遵守 NO_PROXY，
+        # 导致连 127.0.0.1 也被转发到代理而超时。本地回环必须直连。
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(url, timeout=5) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+    except Exception as e:
+        print('[balance] 本地控制台不可达，回落账本余额:', e)
+        return {}
+    result = {}
+    for uid, item in (data.get('balances') or {}).items():
+        bal = item.get('balance') if isinstance(item, dict) else None
+        remain = (bal or {}).get('remain') if isinstance(bal, dict) else None
+        if isinstance(remain, (int, float)) and uid:
+            # value 里带 nickname，供账本里没出现过的新号兜底展示名
+            result[uid[:8]] = (remain, (item or {}).get('nickname') or uid[:8])
+    return result
+
+
+live = live_balances()
+
+# 聚合：账号集合取「账本」与「实时余额」并集；每个号实时优先、账本兜底。
 latest, row_of = {}, {}
 for r in rows:
     ba = r.get('balance_after')
@@ -74,7 +102,16 @@ for r in rows:
         latest[key] = ba
         row_of[key] = r
 
+# 实时余额覆盖同名账号；账本里没有的新号补进来，展示名用别名 > 实时 nickname > uid8
+for uid8, (remain, nick) in live.items():
+    latest[uid8] = remain
+    if uid8 not in row_of:
+        name = alias_by_uid8.get(uid8) or nick
+        row_of[uid8] = {'uid': uid8, 'account': name + '(' + uid8 + ')'}
+
 total = sum(latest.values())
+print('[balance] 实时源 %d 个账号，账本兜底后共 %d 个，合计 %d' %
+      (len(live), len(latest), total))
 
 def credit_text(r):
     """积分消耗展示文案：限时免费/网关截断的小额一律记为 0 分。
