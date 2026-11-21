@@ -9,6 +9,21 @@
 import json, os, datetime, urllib.request
 
 HERE = os.path.dirname(__file__)
+BALANCE_LOG = os.path.join(HERE, '..', 'switcher', 'mirror-balance.log')
+
+
+def log_balance(msg):
+    """余额数据源诊断：push_snapshot 用 stdout=PIPE 吞掉生成器输出（只在失败时
+    打尾部），静默回落账本曾让镜像积分连续十几次错而日志毫无痕迹，这里额外落盘。
+    switcher/*.log 已在 .gitignore，不会污染两个仓库。
+    """
+    line = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S ') + msg
+    print(line)
+    try:
+        with open(BALANCE_LOG, 'a', encoding='utf-8') as f:
+            f.write(line + '\n')
+    except OSError:
+        pass
 LEDGER = os.path.join(HERE, '..', 'switcher', 'usage.jsonl')
 ALIASES = os.path.join(HERE, '..', 'switcher', 'aliases.json')
 KEY = (open(os.path.join(HERE, '.mirror-key')).read().strip()
@@ -76,10 +91,13 @@ def live_balances():
         # 显式禁用代理：沙箱/某些终端会设 HTTP_PROXY，Python urllib 不总遵守 NO_PROXY，
         # 导致连 127.0.0.1 也被转发到代理而超时。本地回环必须直连。
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        with opener.open(url, timeout=5) as resp:
+        # 超时必须大于控制台 overview 的冷缓存耗时：缓存过期时它要串行查 12 个
+        # 官方 billing，实测 6~34 秒；原 5s 会先断开连接（服务端记 BrokenPipe/
+        # 500），生成器以为"控制台不可达"而回落账本冻结值，镜像积分因此少一两千。
+        with opener.open(url, timeout=60) as resp:
             data = json.loads(resp.read().decode('utf-8'))
     except Exception as e:
-        print('[balance] 本地控制台不可达，回落账本余额:', e)
+        log_balance('[balance] 本地控制台不可达，回落账本余额: %s' % e)
         return {}
     result = {}
     for uid, item in (data.get('balances') or {}).items():
@@ -113,7 +131,7 @@ else:
     src = '账本兜底'
 
 total = sum(latest.values())
-print('[balance] 数据源 %s，%d 个账号，合计 %d' % (src, len(latest), total))
+log_balance('[balance] 数据源 %s，%d 个账号，合计 %d' % (src, len(latest), total))
 
 def credit_text(r):
     """积分消耗展示文案：限时免费/网关截断的小额一律记为 0 分。
